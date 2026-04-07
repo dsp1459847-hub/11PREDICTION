@@ -6,104 +6,91 @@ from collections import Counter
 import datetime
 import io
 
-# --- 1. एनालिसिस मेथड्स ---
+# --- 1. एनालिसिस इंजन ---
 
-# Frequency Analysis
-def get_freq_analysis(nums):
-    if len(nums) == 0: return "--"
-    counts = Counter(nums)
-    return f"{counts.most_common(1)[0][0]:02d}"
-
-# Markov Chain Prediction
-def markov_prediction(nums):
-    if len(nums) < 2: return "--"
-    last_num = nums[-1]
-    transitions = []
-    for i in range(len(nums)-1):
-        if nums[i] == last_num:
-            transitions.append(nums[i+1])
-    if transitions:
-        res = Counter(transitions).most_common(1)[0][0]
-        return f"{res:02d}"
-    return "--"
-
-# Machine Learning (Random Forest)
-def rf_prediction(nums):
-    if len(nums) < 15: return "--"
-    X, y = [], []
-    for i in range(5, len(nums)):
-        X.append(nums[i-5:i])
-        y.append(nums[i])
-    
+def rf_prediction(nums, days=10):
+    if len(nums) < 15: return ["--"] * days
     try:
-        rf = RandomForestClassifier(n_estimators=100, random_state=42)
-        rf.fit(X, y)
-        last_5 = np.array(nums[-5:]).reshape(1, -1)
-        res = rf.predict(last_5)[0]
-        return f"{res:02d}"
+        predictions = []
+        current_nums = list(nums)
+        for _ in range(days):
+            X, y = [], []
+            for i in range(5, len(current_nums)):
+                X.append(current_nums[i-5:i])
+                y.append(current_nums[i])
+            
+            rf = RandomForestClassifier(n_estimators=100, random_state=42)
+            rf.fit(X, y)
+            
+            last_5 = np.array(current_nums[-5:]).reshape(1, -1)
+            pred = rf.predict(last_5)[0]
+            predictions.append(f"{pred:02d}")
+            current_nums.append(pred) # अगले दिन के लिए इसे जोड़ें
+        return predictions
     except:
-        return "--"
+        return ["--"] * days
 
-# --- 2. मुख्य ऐप सेटअप ---
+# --- 2. मुख्य ऐप ---
 st.set_page_config(page_title="Ultimate AI Predictor", layout="wide")
-st.markdown("<h1 style='text-align: center; color: #1a73e8;'>🎯 Hybrid AI Prediction Engine (All Shifts)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #1a73e8;'>🎯 Hybrid AI: Same Day & 10-Days Forecast</h1>", unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("📂 अपनी Excel फाइल अपलोड करें", type=['xlsx'])
+# 'key' पैरामीटर डालने से एक्सेल अपडेट होने पर एरर नहीं आएगा
+uploaded_file = st.file_uploader("📂 अपनी Excel फाइल अपलोड करें", type=['xlsx'], key="file_refresher")
 
 if uploaded_file:
     try:
-        # डेटा पढ़ना और कॉलम साफ़ करना
-        df = pd.read_excel(io.BytesIO(uploaded_file.getvalue()), engine='openpyxl')
-        df.columns = [str(c).strip().upper() for c in df.columns]
+        # फ़ाइल को सीधे बाइट्स से पढ़ना (एरर रोकने के लिए)
+        file_bytes = uploaded_file.getvalue()
+        df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
         
-        # तारीख और शिफ्ट्स पहचानना
+        # कॉलम साफ़ करना
+        df.columns = [str(c).strip().upper() for c in df.columns]
         date_col = df.columns[1] # Column B
-        shift_cols = list(df.columns[2:9]) # Column C to I (7 Shifts)
+        shift_cols = list(df.columns[2:9]) # C to I
 
         st.write("---")
-        # तारीख चुनने का विकल्प
-        target_date = st.date_input("📅 प्रेडिक्शन के लिए तारीख चुनें:", datetime.date.today())
+        target_date = st.date_input("📅 प्रेडिक्शन शुरू करने की तारीख चुनें:", datetime.date.today())
 
         if st.button("🔮 Deep Analysis शुरू करें"):
-            # डेटा को तारीख के हिसाब से फिल्टर करना
+            # तारीख कन्वर्जन
             df[date_col] = pd.to_datetime(df[date_col]).dt.date
+            
+            # चुनी हुई तारीख का और उसके पहले का डेटा
             history_df = df[df[date_col] < target_date]
             current_day_df = df[df[date_col] == target_date]
 
-            results = []
+            # प्रेडिक्शन के लिए तारीखों की लिस्ट (Next 10 Days)
+            future_dates = [(target_date + datetime.timedelta(days=i)).strftime('%d-%b') for i in range(11)] # Same day + 10 days
+
+            all_results = []
 
             for s_name in shift_cols:
-                # उस शिफ्ट का पिछला डेटा निकालना
                 s_nums = history_df[s_name].dropna().astype(str).str.strip()
                 clean_nums = [int(float(n)) for n in s_nums if n.replace('.0','').isdigit()]
                 
-                # Same Day Result (अगर शीट में पहले से है)
+                # Same Day Result (📍 Today)
                 today_val = current_day_df[s_name].dropna().values
-                same_day = f"{int(float(today_val[0])):02d}" if len(today_val) > 0 else "--"
+                same_day_actual = f"{int(float(today_val[0])):02d}" if len(today_val) > 0 else "--"
 
-                if len(clean_nums) >= 15:
-                    results.append({
-                        "Shift": s_name,
-                        "📍 SAME DAY": same_day,
-                        "🤖 AI (ML)": rf_prediction(clean_nums),
-                        "📈 FREQUENCY": get_freq_analysis(clean_nums),
-                        "🔗 MARKOV": markov_prediction(clean_nums)
-                    })
-                else:
-                    results.append({
-                        "Shift": s_name, "📍 SAME DAY": same_day,
-                        "🤖 AI (ML)": "Low Data", "📈 FREQUENCY": "Low Data", "🔗 MARKOV": "Low Data"
-                    })
+                # अगले 10 दिन का प्रेडिक्शन
+                forecast = rf_prediction(clean_nums, days=11) # 0 index is today's prediction
+                
+                res_row = {"Shift": s_name, "📍 SAME DAY": same_day_actual}
+                for idx, d_label in enumerate(future_dates):
+                    res_row[d_label] = forecast[idx]
+                
+                all_results.append(res_row)
 
-            # --- डिस्प्ले रिजल्ट्स ---
-            st.subheader(f"📊 सभी शिफ्ट्स का हाइब्रिड प्रेडिक्शन ({target_date})")
-            st.table(pd.DataFrame(results))
-
-            st.info("💡 **हाइब्रिड टिप:** यदि किसी एक ही शिफ्ट में AI, Frequency और Markov तीनों एक ही नंबर दिखा रहे हैं, तो वह 'Strong' नंबर है।")
+            # डिस्प्ले टेबल
+            st.subheader(f"📊 10-Days Prediction Table (Starting {target_date})")
+            st.table(pd.DataFrame(all_results))
+            
+            st.info("💡 **Note:** 'SAME DAY' कॉलम आपकी एक्सेल शीट का असली नंबर दिखाता है। बाकी कॉलम AI द्वारा अगले 10 दिनों के प्रेडिक्शन हैं।")
             st.balloons()
 
     except Exception as e:
         st.error(f"❌ गड़बड़ हुई: {e}")
+        st.info("कृपया चेक करें कि एक्सेल में तारीखें 'B' कॉलम में और नंबर 'C से I' कॉलम में सही हैं।")
 else:
-    st.info("शुरू करने के लिए एक्सेल फाइल अपलोड करें।")
+    st.info("एक्सेल फाइल अपलोड करें।")
     
